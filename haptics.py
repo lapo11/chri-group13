@@ -15,8 +15,8 @@ import numpy as np
 class TubeHaptics:
 
     def __init__(self, tube,
-                 groove_k=230.0,
-                 groove_f_max=1.0,   # N — max groove force 
+                 groove_k=500.0,
+                 groove_f_max=2.0,   # N — max groove force
                  groove_damping=0.8,   # N·s/m — damps lateral oscillation
                  wall_k=5000.0,
                  wall_damping=4.0,
@@ -29,7 +29,7 @@ class TubeHaptics:
                  exit_band=0.0,         # m — viscous layer inside wall
                  guidance_fade_start=0.55,
                  guidance_fade_end=0.90,
-                 total_f_max=1.8
+                 total_f_max=2.5
 
                  ):
         self.tube = tube
