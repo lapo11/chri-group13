@@ -351,8 +351,8 @@ class PA3_Kinesthetic:
         self.auto_analysis_status = None
 
         self.haptics.reset_proxy()
-        self.haptics.wall_k = 140.0
-        self.haptics.wall_damping = 12.0
+        self.haptics.wall_k = 70.0
+        self.haptics.wall_damping = 8.0
         self.haptics.groove_enabled = bool(spec["centerline"])
         self.haptics.walls_enabled = bool(spec["walls"])
         self.haptics.fading_groove_enabled = bool(spec["centerline_fading"])
