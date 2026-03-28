@@ -4,9 +4,13 @@ import math
 import random
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pygame
+
+
+ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
 
 
 class LeakParticle:
@@ -37,7 +41,7 @@ class Graphics:
         self.screenVR = pygame.Surface(self.window_size)
 
         ##add nice icon from https://www.flaticon.com/authors/vectors-market
-        self.icon = pygame.image.load('robot.png')
+        self.icon = pygame.image.load(str(ASSET_DIR / "robot.png"))
         pygame.display.set_icon(self.icon)
 
         ##add text on top to debugToggle the timing and forces
@@ -64,7 +68,7 @@ class Graphics:
         self.cOrange = (255,100,0)
         self.cYellow = (255,255,0)
         
-        self.hhandle = pygame.image.load('handle.png') #
+        self.hhandle = pygame.image.load(str(ASSET_DIR / "handle.png")) #
         
         self.haptic_width = 48
         self.haptic_height = 48

@@ -3,7 +3,7 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-from HaplyHAPI import Board, Device, Mechanisms, Pantograph
+from scripts.HaplyHAPI import Board, Device, Mechanisms, Pantograph
 import sys, serial, glob
 from serial.tools import list_ports
 import time

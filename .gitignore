@@ -15,3 +15,5 @@ analysis/
 .env
 .venv/
 venv/
+
+.claude/

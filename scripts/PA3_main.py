@@ -25,22 +25,22 @@ if "MPLCONFIGDIR" not in os.environ:
     mpl_dir.mkdir(parents=True, exist_ok=True)
     os.environ["MPLCONFIGDIR"] = str(mpl_dir)
 
-THIS_DIR = Path(__file__).resolve().parent
-if str(THIS_DIR) not in sys.path:
-    sys.path.insert(0, str(THIS_DIR))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-from Physics import Physics
-from Graphics import Graphics
-from targets import get_tube, TUBE_NAMES
-from haptics import TubeHaptics
-from gp_trajectory import TrajectoryGP
-from metrics import (
+from scripts.Physics import Physics
+from scripts.Graphics import Graphics
+from scripts.targets import get_tube, TUBE_NAMES
+from scripts.haptics import TubeHaptics
+from scripts.gp_trajectory import TrajectoryGP
+from scripts.metrics import (
     average_pairwise_frechet,
     mean_jerk_magnitude,
     mean_nearest_distance,
     path_length_ratio,
 )
-from nasa_tlx import run_nasa_tlx
+from scripts.nasa_tlx import run_nasa_tlx
 
 IDLE, RECORDING, REVIEW, TRAINING, PLAYBACK, DONE, AUTO_PLAY = range(7)
 STATE_NAMES = ["IDLE", "RECORDING", "REVIEW", "TRAINING", "PLAYBACK", "DONE", "AUTO_PLAY:"]
@@ -133,20 +133,32 @@ def _prompt_positive_int(prompt_text, default=None):
         print("Please enter a positive integer.")
 
 
-def _prompt_text(prompt_text, default=None):
-    suffix = f" [{default}]" if default else ""
-    raw = input(f"{prompt_text}{suffix}: ").strip()
-    return raw or default
+def _prompt_mode(default="free"):
+    default = "validation" if str(default).lower().startswith("v") else "free"
+    prompt = "Select mode: [f]ree or [v]alidation"
+    default_hint = "f" if default == "free" else "v"
+    while True:
+        raw = input(f"{prompt} [{default_hint}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw in ("f", "free"):
+            return "free"
+        if raw in ("v", "validation"):
+            return "validation"
+        print("Please enter 'f' for free or 'v' for validation.")
 
 
 def parse_runtime_config():
     parser = argparse.ArgumentParser(description="PA3 Hull-Breach Teaching")
-    parser.add_argument("--mode", choices=["free", "validation"], default="free")
+    parser.add_argument("--mode", choices=["free", "validation"], default=None)
     parser.add_argument("--participant-count", type=int, default=None)
     parser.add_argument("--required-demos", type=int, default=None)
     parser.add_argument("--results-dir", default="results")
     parser.add_argument("--analysis-dir", default="analysis")
     args = parser.parse_args()
+
+    if args.mode is None:
+        args.mode = _prompt_mode(default="free")
 
     if args.participant_count is not None and args.participant_count <= 0:
         parser.error("--participant-count must be > 0")
@@ -405,6 +417,14 @@ class PA3_Kinesthetic:
         self._reset_condition_state()
         self._apply_condition(self.condition_order[self.condition_cursor])
 
+    def _interrupt_validation_to_free(self):
+        if not self.validation_mode:
+            return
+        self._save_participant_summary()
+        self._save_validation_run_summary()
+        self._set_mode("free")
+        self.auto_analysis_status = "Validation interrupted. Switched to free mode."
+
     def _mode_label(self):
         if self.validation_mode:
             return f"validation P{self.participant_number}/{self.participant_count} ({len(self.all_demos)}/{self.required_demos} demos)"
@@ -501,7 +521,7 @@ class PA3_Kinesthetic:
         if not self.validation_mode:
             return
         try:
-            from analyze_results import run_analysis
+            from scripts.analyze_results import run_analysis
             run_analysis(results_dir=self.results_dir, out_dir=self.analysis_dir)
             self.auto_analysis_status = f"Analysis updated in {self.analysis_dir}"
         except Exception as exc:
@@ -644,6 +664,7 @@ class PA3_Kinesthetic:
                 if not self.validation_mode else "COND   automatic sequence"
             ),
             "M      toggle mode",
+            "F      abort validation -> free",
             "T      change tube",
             "C      clear all",
             "Q      quit",
@@ -678,6 +699,10 @@ class PA3_Kinesthetic:
             if key == ord('q'):
                 self._save_results()
                 sys.exit(0)
+
+            if key == ord('f') and self.validation_mode:
+                self._interrupt_validation_to_free()
+                continue
 
             if self.validation_complete:
                 continue
@@ -1130,6 +1155,7 @@ class PA3_Kinesthetic:
                 lines.append(
                     f"Collect exactly {self.required_demos} demos before condition completion"
                 )
+                lines.append("F = interrupt validation and switch to free mode")
         elif self.state == REVIEW:
             lines = [
                 f"Participant: {self.participant_number}/{self.participant_count}",
@@ -1145,6 +1171,7 @@ class PA3_Kinesthetic:
             ]
             if self.validation_mode:
                 lines.insert(3, "Validation metrics are computed at condition finalization")
+                lines.append("F = interrupt validation and switch to free mode")
         elif self.state == DONE:
             if self.validation_mode:
                 m = self.trial_metrics
@@ -1162,7 +1189,7 @@ class PA3_Kinesthetic:
                     f"Jerk: {m['jerk_mean']:.4f}  |  GP sigma: {m['gp_sigma_mean_m']*1000:.2f}mm",
                     f"Convergence demos: {convergence_label}  |  Convergence time: {convergence_time:.1f}s",
                     "A = auto-play  |  P = replay  |  ENTER = add demos",
-                    "N = NASA-TLX  |  C = clear  |  Q = quit",
+                    "N = NASA-TLX  |  F = switch to free  |  C = clear  |  Q = quit",
                 ]
             else:
                 lines = [
@@ -1326,7 +1353,7 @@ class PA3_Kinesthetic:
         self.physics.close()
 
 
-if __name__ == "__main__":
+def main():
     config = parse_runtime_config()
     pa = PA3_Kinesthetic(config)
     try:
@@ -1336,3 +1363,7 @@ if __name__ == "__main__":
         pass
     finally:
         pa.close()
+
+
+if __name__ == "__main__":
+    main()
