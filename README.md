@@ -33,7 +33,7 @@ Notes:
 
 ## Counterbalancing
 
-Validation mode uses a 5-group Latin-square counterbalancing scheme for 20 participants. At startup, the script asks which group the participant belongs to unless `--group` is supplied on the command line.
+Validation mode uses a 5-group Latin-square counterbalancing scheme for 20 participants. The group is derived automatically from the participant number.
 
 | Group | Participants | Condition order |
 |---|---|---|
@@ -91,14 +91,14 @@ Fully specified launch:
 
 ```bash
 cd /home/simone/chri-group13
-python scripts/PA3_main.py --mode validation --participant-number 7 --group B --required-demos 3
+python scripts/PA3_main.py --mode validation --participant-number 7 --required-demos 3
 ```
 
 Current validation behavior:
 - one launch handles exactly one participant
 - if `--participant-number` is missing, the script asks for it at startup
-- if `--group` is missing, the script asks for the counterbalancing group `A-E`
-- if `--required-demos` is omitted, it defaults to `3`
+- the counterbalancing group is derived automatically from `participant-number`
+- if `--required-demos` is omitted, it defaults to `10`
 - after the final condition, the application saves the run and closes automatically
 
 If `--mode` is omitted entirely, the script first asks whether to start in `free` or `validation`.
@@ -112,7 +112,7 @@ Validation mode is now designed for the actual experiment.
 Typical workflow:
 
 1. Launch `python scripts/PA3_main.py --mode validation`.
-2. Enter the participant number and the Latin-square group if they were not passed by CLI.
+2. Enter the participant number if it was not passed by CLI.
 3. The app starts from the first condition in that group's order.
 4. Press `SPACE` to start recording and `SPACE` again to stop recording.
 5. Press `ENTER` to accept the demo or `D` to discard the most recent one.

@@ -107,20 +107,10 @@ class TubeHaptics:
         self.wall_stick_idx = None
 
     def _local_closest(self, pos):
-        tube = self.tube
         w = self.local_search_window
         i_start = max(0, self.proxy_idx - w)
-        i_end = min(tube.n_pts, self.proxy_idx + w + 1)
-        local_cl = tube.centerline[i_start:i_end]
-        dists = np.linalg.norm(local_cl - pos, axis=1)
-        local_min = int(np.argmin(dists))
-        idx = i_start + local_min
-        proj = tube.centerline[idx]
-        normal = tube.normals[idx]
-        to_pos = pos - proj
-        signed_d = float(np.dot(to_pos, normal))
-        abs_d = abs(signed_d)
-        return idx, proj, normal, signed_d, abs_d
+        i_end = min(self.tube.n_pts - 1, self.proxy_idx + w + 1)
+        return self.tube.closest_centerline_query(pos, i_start=i_start, i_end=i_end)
 
     def _tangent_at_idx(self, idx):
         normal = self.tube.normals[int(idx)]
@@ -139,11 +129,12 @@ class TubeHaptics:
         idx = int(np.clip(idx, 0, self.tube.n_pts - 1))
         proj = self.tube.centerline[idx]
         normal = self.tube.normals[idx]
+        local_half_width = self.tube.width_at_idx(idx)
         if wall_name == 'left':
-            return proj + normal * self.tube.half_width, normal
-        return proj - normal * self.tube.half_width, normal
+            return proj + normal * local_half_width, normal
+        return proj - normal * local_half_width, normal
 
-    def _guidance_gain(self, abs_d, in_wall_contact):
+    def _guidance_gain(self, abs_d, local_half_width, in_wall_contact):
         """
         Fade groove-like guidance out near the walls.
 
@@ -151,9 +142,9 @@ class TubeHaptics:
         fights the wall controller in the same normal direction and can cause
         chatter on the Haply. This keeps the wall controller authoritative.
         """
-        if in_wall_contact or self.tube.half_width <= 1e-9:
+        if in_wall_contact or local_half_width <= 1e-9:
             return 0.0
-        frac = abs_d / self.tube.half_width
+        frac = abs_d / local_half_width
         if frac <= self.guidance_fade_start:
             return 1.0
         if frac >= self.guidance_fade_end:
@@ -204,17 +195,17 @@ class TubeHaptics:
         fe = np.zeros(2)
 
         if self.proxy_pos is None:
-            idx_g, _, _, _, _ = tube.closest_centerline_point(pos)
+            idx_g, _, _, _, _, _ = tube.closest_centerline_query(pos)
             self.proxy_pos = pos.copy()
             self.proxy_idx = idx_g
 
-        idx_g, proj_g, normal_g, signed_d_g, abs_d_g = tube.closest_centerline_point(pos)
+        idx_g, proj_g, normal_g, signed_d_g, abs_d_g, local_half_width_g = tube.closest_centerline_query(pos)
         self.last_signed_d = signed_d_g
 
         # ── VIRTUAL WALLS ────────────────────────────────────────────────
         if self.walls_enabled:
             if self.contact_wall is None:
-                if abs_d_g <= tube.half_width:
+                if abs_d_g <= local_half_width_g:
                     # Free: proxy tracks ee
                     self.proxy_pos = pos.copy()
                     self.proxy_idx = idx_g
@@ -231,8 +222,8 @@ class TubeHaptics:
                     self.wall_friction_state = 'stick'
 
             if self.contact_wall is not None:
-                idx_l, proj_l, normal_l, signed_d_l, abs_d_l = self._local_closest(pos)
-                penetration = max(0.0, abs_d_l - tube.half_width)
+                idx_l, proj_l, normal_l, signed_d_l, abs_d_l, local_half_width_l = self._local_closest(pos)
+                penetration = max(0.0, abs_d_l - local_half_width_l)
 
                 if self.wall_stick_idx is None:
                     self.wall_stick_idx = idx_l
@@ -280,7 +271,7 @@ class TubeHaptics:
                     self.last_wall_force = 0.0
 
                 # Release when clearly inside
-                if abs_d_g < tube.half_width - self.release_hysteresis:
+                if abs_d_g < local_half_width_g - self.release_hysteresis:
                     self.proxy_pos = pos.copy()
                     self.proxy_idx = idx_g
                     self.contact_wall = None
@@ -305,14 +296,14 @@ class TubeHaptics:
             self.last_proxy_pos = None
 
         # ── EXIT DAMPING: viscous band just inside wall ──────────────────
-        depth_inside = tube.half_width - abs_d_g
+        depth_inside = local_half_width_g - abs_d_g
         if 0 <= depth_inside < self.exit_band and self.prev_pos is not None and dt > 0:
             vel = (pos - self.prev_pos) / dt
             vel_normal = np.dot(vel, normal_g)
             fe -= self.exit_damping * vel_normal * normal_g
 
         wall_contact_active = self.contact_wall is not None or self.last_penetration > 0.0
-        guidance_gain = self._guidance_gain(abs_d_g, wall_contact_active)
+        guidance_gain = self._guidance_gain(abs_d_g, local_half_width_g, wall_contact_active)
 
         # ── GROOVE ───────────────────────────────────────────────────────
         if self.groove_enabled and self.groove_k > 0 and guidance_gain > 0.0:

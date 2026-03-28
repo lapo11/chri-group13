@@ -82,7 +82,9 @@ class Graphics:
         self.sim_b = 0.8 #1.5#0.8       ##Viscous of the pseudohaptic display
         
         self.window_scale = 5000 #pixels per meter
-        self.device_origin = (int(self.window_size[0]/2.0 + 0.038/2.0*self.window_scale),0)
+        self.haptic_origin = (int(self.window_size[0]/2.0 + 0.038/2.0*self.window_scale), 0)
+        self.vr_origin = (int(self.window_size[0] / 2.0), 0)
+        self.device_origin = self.haptic_origin
         
         self.show_linkages = True
         self.show_debug = True
@@ -117,6 +119,15 @@ class Graphics:
         self.BULKHEAD_CORE = (72, 88, 82)
         self.BULKHEAD_INNER = (40, 52, 48)
         self.SCORCH = (52, 28, 22)
+        self.REGOLITH_DK = (104, 58, 34)
+        self.REGOLITH_MD = (146, 82, 48)
+        self.REGOLITH_LT = (188, 116, 72)
+        self.GREEN_GROW = (108, 188, 104)
+        self.GREEN_GROW_DK = (58, 118, 64)
+        self.GROW_LIGHT = (255, 224, 170)
+        self.SOLAR_PANEL = (74, 108, 140)
+        self.HABITAT_WHITE = (196, 206, 198)
+        self.HABITAT_TRIM = (116, 128, 124)
 
         self.stars = [
             (
@@ -136,8 +147,16 @@ class Graphics:
         self._generate_wall_panels()
         self._generate_dust_motes()
         self._generate_porthole()
+        self._generate_exterior_outpost()
+        self._generate_greenhouse_modules()
 
     def convert_pos(self,*positions):
+        return self._convert_with_origin(self.haptic_origin, *positions)
+
+    def convert_pos_vr(self,*positions):
+        return self._convert_with_origin(self.vr_origin, *positions)
+
+    def _convert_with_origin(self, origin, *positions):
         #invert x because of screen axes
         # 0---> +X
         # |
@@ -145,8 +164,8 @@ class Graphics:
         # v +Y
         converted_positions = []
         for physics_pos in positions:
-            x = self.device_origin[0]-physics_pos[0]*self.window_scale
-            y = self.device_origin[1]+physics_pos[1]*self.window_scale
+            x = origin[0]-physics_pos[0]*self.window_scale
+            y = origin[1]+physics_pos[1]*self.window_scale
             converted_positions.append([x,y])
         if len(converted_positions)<=0:
             return None
@@ -225,19 +244,146 @@ class Graphics:
         return pE
 
     def _generate_mars_terrain(self):
-        """Generate a simple Mars horizon silhouette for the VR panel."""
-        w = self.window_size[0]
-        base_y = self.window_size[1] // 3
+        """Generate layered Martian ridges and the local regolith foreground."""
+        w, h = self.window_size
+        viewport_h = h // 3
+
+        self.far_terrain_points = []
+        far_base = int(viewport_h * 0.66)
+        for x in range(0, w + 28, 28):
+            y = far_base + int(
+                10 * math.sin(x * 0.010)
+                + 5 * math.sin(x * 0.024 + 0.8)
+                + 3 * math.sin(x * 0.052 + 1.7)
+            )
+            self.far_terrain_points.append((x, y))
+        self.far_terrain_points.append((w, viewport_h))
+        self.far_terrain_points.append((0, viewport_h))
+
+        self.mid_terrain_points = []
+        mid_base = int(viewport_h * 0.77)
+        for x in range(0, w + 24, 24):
+            y = mid_base + int(
+                14 * math.sin(x * 0.007 + 0.4)
+                + 8 * math.sin(x * 0.020 + 1.3)
+                + 4 * math.sin(x * 0.046 + 0.6)
+            )
+            self.mid_terrain_points.append((x, y))
+        self.mid_terrain_points.append((w, viewport_h))
+        self.mid_terrain_points.append((0, viewport_h))
+
         self.terrain_points = []
+        near_base = int(viewport_h * 0.89)
         for x in range(0, w + 20, 20):
-            y = base_y + int(
-                15 * math.sin(x * 0.008)
-                + 8 * math.sin(x * 0.023)
-                + 5 * math.sin(x * 0.05)
+            y = near_base + int(
+                17 * math.sin(x * 0.008 + 0.1)
+                + 10 * math.sin(x * 0.022 + 0.9)
+                + 5 * math.sin(x * 0.050 + 2.1)
             )
             self.terrain_points.append((x, y))
-        self.terrain_points.append((w, self.window_size[1]))
-        self.terrain_points.append((0, self.window_size[1]))
+        self.terrain_points.append((w, viewport_h))
+        self.terrain_points.append((0, viewport_h))
+
+    def _generate_exterior_outpost(self):
+        """Pre-compute a few exterior habitat elements visible beyond the dome."""
+        w, h = self.window_size
+        viewport_h = h // 3
+        rng = random.Random(19)
+
+        self.exterior_modules = []
+        base_y = int(viewport_h * 0.80)
+        self.exterior_modules.extend(
+            [
+                ("dome", int(w * 0.15), base_y + 8, 44, 24),
+                ("greenhouse", int(w * 0.33), base_y + 6, 94, 28),
+                ("tower", int(w * 0.52), base_y + 2, 22, 36),
+                ("barrel", int(w * 0.66), base_y + 4, 62, 22),
+                ("greenhouse", int(w * 0.83), base_y + 8, 86, 26),
+            ]
+        )
+
+        self.exterior_solar_arrays = []
+        for cx, cy, width in (
+            (int(w * 0.09), base_y + 12, 70),
+            (int(w * 0.74), base_y + 8, 82),
+        ):
+            tilt = rng.choice((-10, -6, 8, 12))
+            self.exterior_solar_arrays.append((cx, cy, width, tilt))
+
+        self.exterior_masts = [
+            (int(w * 0.56), base_y - 20, 34),
+            (int(w * 0.72), base_y - 14, 26),
+        ]
+
+        self.exterior_rocks = []
+        for _ in range(28):
+            x = rng.randint(10, w - 10)
+            y = rng.randint(int(viewport_h * 0.78), viewport_h - 10)
+            rx = rng.randint(4, 16)
+            ry = rng.randint(2, 8)
+            self.exterior_rocks.append((x, y, rx, ry))
+
+        self.exterior_walkway = [
+            (int(w * 0.10), base_y + 14),
+            (int(w * 0.26), base_y + 12),
+            (int(w * 0.40), base_y + 14),
+            (int(w * 0.56), base_y + 10),
+            (int(w * 0.74), base_y + 12),
+            (int(w * 0.90), base_y + 14),
+        ]
+        self.exterior_rover = (int(w * 0.58), base_y + 14)
+
+    def _generate_greenhouse_modules(self):
+        """Pre-compute hydroponic racks, service tanks and interior hardware."""
+        w, h = self.window_size
+        viewport_h = h // 3
+        rng = random.Random(27)
+
+        self.grow_racks = []
+        rack_xs = [44, 174, w - 272, w - 142]
+        for x in rack_xs:
+            top = viewport_h + rng.randint(30, 60)
+            rack_h = rng.randint(178, 250)
+            rack_w = rng.randint(58, 74)
+            rect = pygame.Rect(x, top, rack_w, rack_h)
+            shelves = []
+            shelf_count = rng.randint(4, 5)
+            for shelf_idx in range(shelf_count):
+                y = rect.top + 22 + shelf_idx * ((rect.height - 40) // max(1, shelf_count - 1))
+                shelves.append(y)
+            leaf_clusters = []
+            for shelf_y in shelves:
+                for _ in range(rng.randint(5, 8)):
+                    lx = rng.randint(rect.left + 10, rect.right - 10)
+                    ly = shelf_y - rng.randint(2, 8)
+                    rw = rng.randint(8, 18)
+                    rh = rng.randint(5, 10)
+                    tint = rng.choice(
+                        [
+                            (76, 148, 82),
+                            (102, 172, 96),
+                            (128, 196, 108),
+                            (88, 158, 118),
+                        ]
+                    )
+                    leaf_clusters.append((lx, ly, rw, rh, tint))
+            self.grow_racks.append((rect, shelves, leaf_clusters))
+
+        self.service_tanks = []
+        for x in (w - 96, 18):
+            tank = pygame.Rect(x, h - 172, 54, 112)
+            self.service_tanks.append(tank)
+
+        self.feed_pipes = []
+        pipe_y = viewport_h + 36
+        for x0, x1 in ((26, w - 26), (58, w - 58)):
+            bend = rng.randint(12, 26)
+            self.feed_pipes.append(((x0, pipe_y), (x1, pipe_y + bend)))
+            pipe_y += 18
+
+        self.planter_bins = []
+        for x in range(126, w - 168, 118):
+            self.planter_bins.append(pygame.Rect(x, h - 118 + rng.randint(-5, 5), 92, 38))
 
     def _generate_wall_texture(self):
         """Pre-generate dust, condensation and wear for greenhouse glazing."""
@@ -432,10 +578,19 @@ class Graphics:
             pygame.draw.circle(surface, (twinkle, twinkle, twinkle),
                                (sx, sy), max(1, int(size)))
 
+        if len(self.far_terrain_points) > 2:
+            pygame.draw.polygon(surface, (84, 44, 34), self.far_terrain_points)
+            pygame.draw.lines(surface, (124, 72, 48), False, self.far_terrain_points[:-2], 2)
+
+        if len(self.mid_terrain_points) > 2:
+            pygame.draw.polygon(surface, self.REGOLITH_DK, self.mid_terrain_points)
+            pygame.draw.lines(surface, self.REGOLITH_MD, False, self.mid_terrain_points[:-2], 2)
+
+        self._draw_exterior_outpost(surface)
+
         if len(self.terrain_points) > 2:
-            pygame.draw.polygon(surface, (140, 70, 40), self.terrain_points)
-            pygame.draw.lines(surface, (180, 100, 60), False,
-                              self.terrain_points[:-2], 2)
+            pygame.draw.polygon(surface, self.REGOLITH_MD, self.terrain_points)
+            pygame.draw.lines(surface, self.REGOLITH_LT, False, self.terrain_points[:-2], 2)
 
         # Thin dust haze over the exterior horizon
         haze = pygame.Surface((w, viewport_h), pygame.SRCALPHA)
@@ -444,37 +599,85 @@ class Graphics:
             pygame.draw.line(haze, (214, 118, 64, alpha), (0, y), (w, y))
         surface.blit(haze, (0, 0))
 
+    def _draw_exterior_outpost(self, surface):
+        """Draw distant habitat modules, solar arrays and rocks on the Martian plain."""
+        if len(self.exterior_walkway) > 1:
+            pygame.draw.lines(surface, (150, 112, 82), False, self.exterior_walkway, 5)
+            pygame.draw.lines(surface, (214, 156, 108), False, self.exterior_walkway, 1)
+
+        for x, y, rx, ry in self.exterior_rocks:
+            pygame.draw.ellipse(surface, (102, 60, 42), (x - rx, y - ry, rx * 2, ry * 2))
+            pygame.draw.ellipse(surface, (172, 110, 70), (x - rx + 2, y - ry, rx, max(2, ry - 1)))
+
+        for cx, cy, width, tilt in self.exterior_solar_arrays:
+            panel = pygame.Rect(cx - width // 2, cy - 16, width, 16)
+            pygame.draw.line(surface, (92, 102, 98), (cx, cy), (cx, cy + 18), 3)
+            pts = [
+                (panel.left, panel.bottom),
+                (panel.left + 8, panel.top + max(0, tilt)),
+                (panel.right, panel.top + max(0, tilt)),
+                (panel.right - 8, panel.bottom),
+            ]
+            pygame.draw.polygon(surface, (70, 106, 140), pts)
+            pygame.draw.polygon(surface, (166, 198, 216), pts, 2)
+
+        for kind, cx, cy, width, height in self.exterior_modules:
+            body = pygame.Rect(cx - width // 2, cy - height, width, height)
+            if kind == "tower":
+                pygame.draw.rect(surface, (188, 194, 188), body, border_radius=4)
+                pygame.draw.rect(surface, (102, 112, 118), body, 2, border_radius=4)
+                pygame.draw.rect(surface, (104, 214, 232), (body.left + 4, body.top + 6, body.width - 8, 9), border_radius=2)
+                pygame.draw.line(surface, (188, 192, 196), (cx, body.top), (cx, body.top - 16), 2)
+                pygame.draw.circle(surface, (255, 176, 98), (cx, body.top - 16), 3)
+                continue
+
+            fill = (208, 218, 208) if kind == "dome" else (176, 188, 174)
+            pygame.draw.rect(surface, fill, body, border_radius=10)
+            pygame.draw.rect(surface, (112, 126, 122), body, 2, border_radius=10)
+            inner = body.inflate(-10, -10)
+            glow = pygame.Surface((inner.width, inner.height), pygame.SRCALPHA)
+            glow.fill((108, 194, 110, 46 if kind == "greenhouse" else 20))
+            surface.blit(glow, inner.topleft)
+            for gx in range(inner.left + 4, inner.right - 2, 14):
+                pygame.draw.line(surface, (120, 144, 136), (gx, inner.top), (gx, inner.bottom), 1)
+            if kind == "dome":
+                pygame.draw.arc(surface, (236, 242, 236), body.inflate(0, 8), math.pi, math.tau, 2)
+
+        for mx, my, mast_h in self.exterior_masts:
+            pygame.draw.line(surface, (168, 174, 178), (mx, my), (mx, my - mast_h), 2)
+            pygame.draw.line(surface, (168, 174, 178), (mx, my - mast_h), (mx - 8, my - mast_h + 12), 1)
+            pygame.draw.line(surface, (168, 174, 178), (mx, my - mast_h), (mx + 8, my - mast_h + 12), 1)
+            pygame.draw.circle(surface, (255, 184, 112), (mx, my - mast_h), 3)
+
+        rx, ry = self.exterior_rover
+        pygame.draw.rect(surface, (90, 100, 106), (rx - 13, ry - 6, 26, 10), border_radius=3)
+        pygame.draw.rect(surface, (188, 194, 198), (rx - 7, ry - 12, 14, 6), border_radius=2)
+        for wx in (-9, 9):
+            pygame.draw.circle(surface, (38, 42, 46), (rx + wx, ry + 4), 4)
+            pygame.draw.circle(surface, (136, 144, 148), (rx + wx, ry + 4), 2)
+
     def _draw_viewport_frame(self, surface):
         """Draw the upper greenhouse canopy frame framing the Martian exterior."""
         w, h = self.window_size
         viewport_h = h // 3
 
-        outer = pygame.Rect(0, 0, w, viewport_h + 6)
-        inner = pygame.Rect(14, 12, w - 28, viewport_h - 8)
-        pygame.draw.rect(surface, self.VIEWPORT_SHADOW, outer)
-        pygame.draw.rect(surface, self.VIEWPORT_METAL, inner, border_radius=8)
-        pygame.draw.rect(surface, (152, 168, 160), inner.inflate(-6, -6), 3, border_radius=8)
+        arch = pygame.Surface((w, viewport_h + 34), pygame.SRCALPHA)
+        dome_rect = pygame.Rect(18, -viewport_h // 2, w - 36, viewport_h * 2)
+        pygame.draw.arc(arch, (54, 62, 70, 255), dome_rect, math.pi * 1.02, math.pi * 1.98, 18)
+        pygame.draw.arc(arch, (164, 178, 170, 255), dome_rect.inflate(-12, -12), math.pi * 1.02, math.pi * 1.98, 4)
+        for inset in (48, 104, 160):
+            rect = dome_rect.inflate(-inset, -inset // 2)
+            pygame.draw.arc(arch, (190, 212, 204, 42), rect, math.pi * 1.03, math.pi * 1.97, 2)
+        surface.blit(arch, (0, 0))
 
-        for x in (w // 3, 2 * w // 3):
-            pygame.draw.rect(surface, (70, 76, 84), (x - 5, 16, 10, viewport_h - 18))
-        for x in range(24, w - 24, 50):
-            pygame.draw.circle(surface, (52, 56, 61), (x, 18), 3)
-            pygame.draw.circle(surface, (52, 56, 61), (x, viewport_h + 1), 3)
-
-        for x in range(44, w - 44, 88):
-            pygame.draw.line(surface, (112, 126, 118), (x, 16), (x + 42, viewport_h - 10), 3)
-            pygame.draw.line(surface, (82, 96, 90), (x + 10, 16), (x + 52, viewport_h - 10), 1)
-
-        gloss = pygame.Surface((w, viewport_h), pygame.SRCALPHA)
-        pygame.draw.polygon(
-            gloss,
-            (255, 255, 255, 18),
-            [(18, 18), (w * 0.46, 18), (w * 0.24, viewport_h - 10), (18, viewport_h - 10)],
-        )
-        surface.blit(gloss, (0, 0))
+        sill = pygame.Rect(0, viewport_h - 4, w, 14)
+        pygame.draw.rect(surface, (74, 84, 82), sill)
+        pygame.draw.line(surface, (188, 198, 194), (0, viewport_h - 2), (w, viewport_h - 2), 2)
+        for x in range(24, w - 24, 48):
+            pygame.draw.circle(surface, (60, 66, 70), (x, viewport_h + 2), 3)
 
     def _track_bounds_screen(self, track, pad_x=110, pad_y=90):
-        pts = np.array([self.convert_pos(p) for p in track.centerline], dtype=float)
+        pts = np.array([self.convert_pos_vr(p) for p in track.centerline], dtype=float)
         min_x = max(26, int(np.min(pts[:, 0]) - pad_x))
         max_x = min(self.window_size[0] - 26, int(np.max(pts[:, 0]) + pad_x))
         viewport_h = self.window_size[1] // 3
@@ -486,84 +689,48 @@ class Graphics:
         """Draw a greenhouse repair gantry around the breach zone."""
         bay = self._track_bounds_screen(track, pad_x=125, pad_y=105)
         outer = bay.inflate(80, 72)
-        shadow = outer.move(10, 12)
-        pygame.draw.rect(surface, (0, 0, 0, 76), shadow, border_radius=26)
+        aperture = bay.inflate(34, 24)
+        overlay = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        pygame.draw.rect(overlay, (20, 28, 32, 20), aperture, border_radius=18)
+        surface.blit(overlay, (0, 0))
 
-        pygame.draw.rect(surface, self.BULKHEAD_CORE, outer, border_radius=24)
-        pygame.draw.rect(surface, self.HULL_TRIM, outer, 3, border_radius=24)
-        pygame.draw.rect(surface, self.BULKHEAD_INNER, outer.inflate(-18, -18), 2, border_radius=20)
+        pylons = [
+            pygame.Rect(outer.left + 8, outer.top + 28, 24, outer.height - 56),
+            pygame.Rect(outer.right - 32, outer.top + 28, 24, outer.height - 56),
+        ]
+        for pylon in pylons:
+            pygame.draw.rect(surface, (64, 72, 74), pylon, border_radius=8)
+            pygame.draw.rect(surface, (188, 196, 194), pylon, 2, border_radius=8)
+            for yy in range(pylon.top + 18, pylon.bottom - 12, 34):
+                pygame.draw.circle(surface, self.HULL_ACCENT, (pylon.centerx, yy), 4)
 
-        service = bay.inflate(34, 26)
-        pygame.draw.rect(surface, (22, 26, 34), service, border_radius=18)
-        pygame.draw.rect(surface, self.HULL_ACCENT_DK, service, 2, border_radius=18)
-        recess = bay.inflate(-12, -8)
-        for y in range(recess.top, recess.bottom):
-            t = (y - recess.top) / max(1, recess.height)
-            col = (
-                int(32 + 18 * (1 - t)),
-                int(38 + 20 * (1 - t)),
-                int(46 + 24 * (1 - t)),
-            )
-            pygame.draw.line(surface, col, (recess.left, y), (recess.right, y))
+        top_beam = pygame.Rect(outer.left + 18, outer.top + 6, outer.width - 36, 18)
+        bottom_rail = pygame.Rect(outer.left + 28, outer.bottom - 22, outer.width - 56, 16)
+        for rail, color in ((top_beam, (76, 84, 86)), (bottom_rail, (82, 90, 92))):
+            pygame.draw.rect(surface, color, rail, border_radius=8)
+            pygame.draw.rect(surface, (198, 204, 202), rail, 2, border_radius=8)
 
-        for x in (recess.left + 38, recess.centerx, recess.right - 38):
-            pygame.draw.line(surface, (70, 78, 90), (x, recess.top + 16), (x, recess.bottom - 16), 2)
-            pygame.draw.line(surface, (120, 132, 148), (x - 1, recess.top + 16), (x - 1, recess.bottom - 16), 1)
-        for y in (recess.top + 28, recess.bottom - 28):
-            pygame.draw.line(surface, (58, 66, 80), (recess.left + 18, y), (recess.right - 18, y), 3)
-            pygame.draw.line(surface, (126, 138, 152), (recess.left + 18, y - 1), (recess.right - 18, y - 1), 1)
+        cart = pygame.Rect(aperture.centerx - 58, top_beam.bottom - 2, 116, 18)
+        pygame.draw.rect(surface, (104, 114, 116), cart, border_radius=8)
+        pygame.draw.rect(surface, (214, 220, 218), cart, 2, border_radius=8)
+        pygame.draw.line(surface, (200, 210, 212), (cart.centerx, cart.bottom), (cart.centerx, cart.bottom + 36), 2)
 
-        bolt_points = []
-        for x in range(outer.left + 24, outer.right - 20, 42):
-            bolt_points.append((x, outer.top + 14))
-            bolt_points.append((x, outer.bottom - 14))
-        for y in range(outer.top + 28, outer.bottom - 24, 38):
-            bolt_points.append((outer.left + 14, y))
-            bolt_points.append((outer.right - 14, y))
-        for bx, by in bolt_points:
-            pygame.draw.circle(surface, (30, 34, 42), (bx, by), 4)
-            pygame.draw.circle(surface, (144, 152, 164), (bx - 1, by - 1), 2)
+        grid = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        for x in range(aperture.left + 30, aperture.right - 18, 56):
+            pygame.draw.line(grid, (192, 222, 218, 18), (x, aperture.top + 12), (x, aperture.bottom - 12), 1)
+        for y in range(aperture.top + 26, aperture.bottom - 18, 48):
+            pygame.draw.line(grid, (192, 222, 218, 18), (aperture.left + 12, y), (aperture.right - 12, y), 1)
+        surface.blit(grid, (0, 0))
 
-        for side in ("left", "right"):
-            x = outer.left + 18 if side == "left" else outer.right - 72
-            module = pygame.Rect(x, recess.top + 34, 54, recess.height - 68)
-            pygame.draw.rect(surface, (50, 56, 68), module, border_radius=10)
-            pygame.draw.rect(surface, (116, 126, 138), module, 2, border_radius=10)
-            for yy in range(module.top + 12, module.bottom - 12, 26):
-                led_col = self.HULL_ACCENT if (yy // 26) % 2 == 0 else (240, 112, 84)
-                pygame.draw.circle(surface, led_col, (module.centerx, yy), 4)
-                pygame.draw.circle(surface, (255, 255, 255), (module.centerx - 1, yy - 1), 1)
-
-        stripe_w = min(150, outer.width // 3)
-        for side_x in (outer.left + 30, outer.right - stripe_w - 30):
-            stripe = pygame.Rect(side_x, outer.top + 22, stripe_w, 16)
-            pygame.draw.rect(surface, self.HULL_STRIPE, stripe, border_radius=3)
-            for x in range(stripe.left, stripe.right, 14):
-                pygame.draw.line(surface, self.HULL_STRIPE_DK, (x, stripe.bottom), (x + 10, stripe.top), 4)
+        stripe = pygame.Rect(outer.left + 42, top_beam.top - 2, min(180, outer.width - 84), 14)
+        pygame.draw.rect(surface, self.HULL_STRIPE, stripe, border_radius=3)
+        for x in range(stripe.left, stripe.right, 14):
+            pygame.draw.line(surface, self.HULL_STRIPE_DK, (x, stripe.bottom), (x + 10, stripe.top), 4)
 
         mono = pygame.font.SysFont("Consolas", 11, bold=True)
-        labels = [
-            ("GREENHOUSE REPAIR GANTRY", outer.left + 32, outer.bottom - 30, self.HUD_CYAN),
-            ("BAY GH-2", outer.right - 104, outer.bottom - 30, (210, 214, 220)),
-            ("PRESSURE LOSS DETECTED", outer.left + 32, outer.top + 48, (255, 172, 104)),
-        ]
-        for text, lx, ly, color in labels:
-            surface.blit(mono.render(text, True, color), (lx, ly))
-
-        for side in ("left", "right"):
-            x0 = outer.left - 8 if side == "left" else outer.right + 8
-            x1 = outer.left + 24 if side == "left" else outer.right - 24
-            for i, col in enumerate(((88, 140, 168), (160, 170, 184), (190, 110, 84))):
-                y = outer.centery - 26 + i * 22
-                ctrl_x = x0 + (18 if side == "left" else -18)
-                pygame.draw.lines(surface, col, False, [(x0, y), (ctrl_x, y - 10), (x1, y)], 4)
-
-        glow = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        for x in (service.left + 4, service.right - 4):
-            pygame.draw.line(glow, (90, 190, 225, 48), (x, service.top + 12), (x, service.bottom - 12), 6)
-        for y in (service.top + 4, service.bottom - 4):
-            pygame.draw.line(glow, (90, 190, 225, 26), (service.left + 12, y), (service.right - 12, y), 4)
-        surface.blit(glow, (0, 0))
+        surface.blit(mono.render("SEALING FRAME", True, self.HUD_CYAN), (outer.left + 34, outer.bottom - 24))
+        surface.blit(mono.render("GH-DOME 02", True, (214, 220, 224)), (outer.right - 98, outer.bottom - 24))
+        surface.blit(mono.render("BREACH CONTAINMENT ACTIVE", True, (255, 176, 104)), (outer.left + 34, outer.top + 32))
 
     def _draw_wall_surface(self, surface):
         """Draw the greenhouse shell, glazing and crop beds behind the crack."""
@@ -573,100 +740,103 @@ class Graphics:
         for y in range(viewport_h, h):
             t = (y - viewport_h) / max(h - viewport_h, 1)
             col = (
-                int(self.MARS_WALL[0] * (1 - 0.18 * t) + self.MARS_WALL_LT[0] * 0.22),
-                int(self.MARS_WALL[1] * (1 - 0.16 * t) + self.MARS_WALL_LT[1] * 0.18),
-                int(self.MARS_WALL[2] * (1 - 0.14 * t) + self.MARS_WALL_LT[2] * 0.16),
+                int(186 - 34 * t),
+                int(206 - 28 * t),
+                int(198 - 18 * t),
             )
             pygame.draw.line(surface, col, (0, y), (w, y))
 
-        glass_sheen = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        for y in range(viewport_h + 10, h, 3):
-            t = (y - viewport_h) / max(h - viewport_h, 1)
-            alpha = max(0, int(30 * (1.0 - t)))
-            pygame.draw.line(glass_sheen, (190, 228, 220, alpha), (18, y), (w - 18, y))
-        surface.blit(glass_sheen, (0, 0))
+        floor_poly = [
+            (0, h),
+            (w, h),
+            (int(w * 0.82), int(h * 0.78)),
+            (int(w * 0.18), int(h * 0.78)),
+        ]
+        pygame.draw.polygon(surface, (132, 128, 110), floor_poly)
+        pygame.draw.polygon(surface, (182, 174, 148), floor_poly, 2)
 
-        for sx, sy, sr, shade in self.wall_spots:
-            if sy <= viewport_h:
-                continue
-            c = (
-                max(0, min(255, self.MARS_WALL[0] + shade)),
-                max(0, min(255, self.MARS_WALL[1] + shade)),
-                max(0, min(255, self.MARS_WALL[2] + shade)),
-            )
-            pygame.draw.circle(surface, c, (sx, sy), sr)
+        shell = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        for idx, inset in enumerate((24, 78, 132, 186)):
+            rect = pygame.Rect(inset, viewport_h - 110 + idx * 16, w - inset * 2, h - viewport_h + 210 - idx * 16)
+            pygame.draw.arc(shell, (198, 232, 220, 34 - idx * 5), rect, math.pi * 1.02, math.pi * 1.98, max(1, 4 - idx))
+        for x in range(70, w - 70, 96):
+            pygame.draw.line(shell, (222, 242, 234, 16), (x, viewport_h + 10), (x + 22, h - 40), 2)
+        surface.blit(shell, (0, 0))
 
-        pygame.draw.line(surface, (78, 96, 86), (0, viewport_h), (w, viewport_h), 4)
-
-        for x in range(28, w - 28, 96):
-            rib = pygame.Rect(x, viewport_h + 8, 18, h - viewport_h - 22)
-            pygame.draw.rect(surface, (80, 96, 88), rib, border_radius=4)
-            pygame.draw.line(surface, (160, 176, 166), (rib.left + 3, rib.top), (rib.left + 3, rib.bottom), 2)
-
-        for rect in self.wall_panels:
-            shade = 8 if ((rect.x // 20 + rect.y // 20) % 2 == 0) else -3
-            panel_col = (
-                max(0, min(255, self.MARS_WALL_LT[0] + shade)),
-                max(0, min(255, self.MARS_WALL_LT[1] + shade)),
-                max(0, min(255, self.MARS_WALL_LT[2] + shade)),
-            )
+        for rect in self.wall_panels[::2]:
             glaze = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-            glaze.fill((*panel_col, 148))
+            glaze.fill((212, 236, 228, 36))
             surface.blit(glaze, rect.topleft)
-            pygame.draw.rect(surface, self.MARS_WALL_DK, rect, 2, border_radius=6)
-            inset = rect.inflate(-10, -10)
-            pygame.draw.rect(surface, (86, 104, 98), inset, 1, border_radius=5)
-            pygame.draw.line(surface, self.HULL_TRIM, (rect.left + 5, rect.top + 4), (rect.right - 5, rect.top + 4), 1)
-            pygame.draw.line(surface, (54, 66, 62), (rect.left + 5, rect.bottom - 4), (rect.right - 5, rect.bottom - 4), 1)
+            pygame.draw.rect(surface, (92, 116, 108), rect, 1, border_radius=6)
 
-        for x, y in self.wall_rivets:
-            pygame.draw.circle(surface, (42, 34, 34), (x, y), 4)
-            pygame.draw.circle(surface, (133, 112, 100), (x - 1, y - 1), 2)
+        self._draw_greenhouse_modules(surface)
+
+        for x, y in self.wall_rivets[::3]:
+            pygame.draw.circle(surface, (96, 92, 86), (x, y), 3)
+            pygame.draw.circle(surface, (190, 180, 166), (x - 1, y - 1), 1)
+
+        reflection = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        for y in range(viewport_h + 18, h, 5):
+            alpha = max(0, int(20 * (1.0 - (y - viewport_h) / max(h - viewport_h, 1))))
+            pygame.draw.line(reflection, (255, 255, 255, alpha), (24, y), (w - 24, y))
+        for sx, sy, length, alpha in self.wall_streaks[:26]:
+            pygame.draw.line(reflection, (230, 236, 240, alpha // 2), (sx, sy), (sx + 10, sy + length), 1)
+        surface.blit(reflection, (0, 0))
 
         warning_font = pygame.font.SysFont("Consolas", 10, bold=True)
-        for plate in self.warning_plates:
+        for plate in self.warning_plates[:3]:
             pygame.draw.rect(surface, self.HULL_STRIPE, plate, border_radius=2)
-            for x in range(plate.left, plate.right, 12):
-                pygame.draw.line(surface, self.HULL_STRIPE_DK,
-                                 (x, plate.bottom), (x + 8, plate.top), 3)
-            txt = warning_font.render("GLAZING BREACH", True, (240, 236, 224))
-            surface.blit(txt, (plate.x + 6, plate.y + 3))
-
-        for vent in self.vent_slots:
-            pygame.draw.rect(surface, (52, 68, 66), vent, border_radius=3)
-            pygame.draw.rect(surface, (26, 29, 34), vent, 2, border_radius=3)
-            for x in range(vent.left + 6, vent.right - 3, 10):
-                pygame.draw.line(surface, (118, 126, 136), (x, vent.top + 3), (x, vent.bottom - 4), 1)
-
-        for y in range(viewport_h + 52, h - 30, 144):
-            pygame.draw.line(surface, (66, 74, 88), (24, y), (w - 24, y), 4)
-            pygame.draw.line(surface, (126, 136, 148), (24, y - 2), (w - 24, y - 2), 1)
-        for x in range(42, w - 42, 160):
-            pygame.draw.rect(surface, (60, 68, 80), (x, viewport_h + 36, 26, h - viewport_h - 80), border_radius=6)
-
-        bed_glow = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        for bed in self.crop_beds:
-            pygame.draw.rect(surface, (72, 78, 64), bed, border_radius=5)
-            pygame.draw.rect(surface, (112, 118, 96), bed, 2, border_radius=5)
-            pygame.draw.rect(surface, (34, 42, 34), bed.inflate(-8, -8), border_radius=4)
-            for stem_x in range(bed.left + 10, bed.right - 8, 10):
-                stem_h = 10 + ((stem_x + bed.y) % 12)
-                stem_top = bed.top + 8
-                pygame.draw.line(surface, (84, 164, 82), (stem_x, bed.bottom - 8), (stem_x, bed.bottom - stem_h), 2)
-                pygame.draw.ellipse(surface, (112, 198, 102), (stem_x - 4, stem_top + ((stem_x // 2) % 10), 8, 5))
-            pygame.draw.rect(bed_glow, (110, 210, 128, 18), bed.inflate(8, 8), border_radius=8)
-        surface.blit(bed_glow, (0, 0))
-
-        streak_layer = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        for sx, sy, length, alpha in self.wall_streaks:
-            pygame.draw.line(streak_layer, (22, 24, 28, alpha), (sx, sy), (sx + 8, sy + length), 2)
-            pygame.draw.line(streak_layer, (170, 176, 184, alpha // 4), (sx - 1, sy), (sx + 7, sy + length), 1)
-        surface.blit(streak_layer, (0, 0))
+            surface.blit(warning_font.render("SEAL ZONE", True, (240, 236, 224)), (plate.x + 8, plate.y + 3))
 
         vignette = pygame.Surface(self.window_size, pygame.SRCALPHA)
-        pygame.draw.rect(vignette, (0, 0, 0, 0), (0, 0, w, h))
-        pygame.draw.rect(vignette, (0, 0, 0, 54), (0, viewport_h, w, h - viewport_h), 12)
+        pygame.draw.rect(vignette, (0, 0, 0, 26), (0, viewport_h, w, h - viewport_h))
         surface.blit(vignette, (0, 0))
+
+    def _draw_greenhouse_modules(self, surface):
+        """Draw hydroponic racks, grow lights and support hardware behind the damaged shell."""
+        viewport_h = self.window_size[1] // 3
+        for p0, p1 in self.feed_pipes:
+            pygame.draw.line(surface, (118, 146, 138), p0, p1, 6)
+            pygame.draw.line(surface, (226, 236, 230), (p0[0], p0[1] - 1), (p1[0], p1[1] - 1), 2)
+
+        for tank in self.service_tanks:
+            pygame.draw.rect(surface, (198, 204, 196), tank, border_radius=14)
+            pygame.draw.rect(surface, (118, 132, 128), tank, 2, border_radius=14)
+            pygame.draw.ellipse(surface, (154, 166, 160), tank.inflate(-12, -16), 2)
+
+        side_walls = [pygame.Rect(36, viewport_h + 60, 156, 328), pygame.Rect(self.window_size[0] - 192, viewport_h + 60, 156, 328)]
+        glow = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        for wall in side_walls:
+            pygame.draw.rect(surface, (70, 88, 80), wall, border_radius=12)
+            pygame.draw.rect(surface, (188, 202, 194), wall, 2, border_radius=12)
+            for row in range(7):
+                y = wall.top + 24 + row * 40
+                pygame.draw.line(surface, (255, 232, 184), (wall.left + 12, y - 10), (wall.right - 12, y - 10), 2)
+                for col in range(5):
+                    cx = wall.left + 20 + col * 26 + (row % 2) * 2
+                    pygame.draw.ellipse(surface, (96, 182, 92), (cx - 12, y - 4, 24, 12))
+                    pygame.draw.ellipse(surface, (132, 210, 118), (cx - 8, y - 8, 18, 10))
+            pygame.draw.rect(glow, (124, 220, 130, 18), wall.inflate(10, 10), border_radius=16)
+        surface.blit(glow, (0, 0))
+
+        catwalk = pygame.Rect(self.window_size[0] // 2 - 118, self.window_size[1] - 116, 236, 44)
+        pygame.draw.rect(surface, (106, 110, 94), catwalk, border_radius=8)
+        pygame.draw.rect(surface, (192, 188, 164), catwalk, 2, border_radius=8)
+        for x in range(catwalk.left + 18, catwalk.right - 12, 22):
+            pygame.draw.line(surface, (156, 150, 126), (x, catwalk.top + 6), (x, catwalk.bottom - 6), 2)
+
+        bin_glow = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        for bin_rect in self.planter_bins:
+            pygame.draw.rect(surface, (88, 98, 74), bin_rect, border_radius=6)
+            pygame.draw.rect(surface, (162, 170, 124), bin_rect, 2, border_radius=6)
+            soil = bin_rect.inflate(-8, -10)
+            pygame.draw.rect(surface, (52, 62, 38), soil, border_radius=4)
+            for x in range(soil.left + 8, soil.right - 8, 12):
+                stem_h = 12 + ((x + soil.y) % 14)
+                pygame.draw.line(surface, (88, 176, 84), (x, soil.bottom - 4), (x, soil.bottom - stem_h), 2)
+                pygame.draw.ellipse(surface, (118, 202, 104), (x - 6, soil.bottom - stem_h - 4, 12, 8))
+            pygame.draw.rect(bin_glow, (128, 214, 126, 14), bin_rect.inflate(10, 8), border_radius=10)
+        surface.blit(bin_glow, (0, 0))
 
     def _spawn_leak_particles(self, track):
         """Emit particles from exposed crack sections to suggest atmosphere loss."""
@@ -678,7 +848,7 @@ class Graphics:
             idx = random.randint(6, max(6, track.n_pts - 7))
             pt = track.centerline[idx]
             normal = track.normals[idx]
-            sx, sy = self.convert_pos(pt)
+            sx, sy = self.convert_pos_vr(pt)
             outward = normal if random.random() > 0.5 else -normal
             speed = random.uniform(16.0, 52.0)
             vx = outward[0] * speed * 0.65 + random.uniform(-12.0, 12.0)
@@ -737,57 +907,76 @@ class Graphics:
         surface.blit(dust_layer, (0, 0))
 
     def _draw_mars_track(self, surface, track, highlight_wall=None):
-        """Render the path as a glowing crack in the greenhouse glazing."""
-        center_pts = [self.convert_pos(p) for p in track.centerline]
-        left_pts = [self.convert_pos(p) for p in track.wall_left]
-        right_pts = [self.convert_pos(p) for p in track.wall_right]
-        lip_left = [self.convert_pos(p + n * 0.0014) for p, n in zip(track.centerline, track.normals)]
-        lip_right = [self.convert_pos(p - n * 0.0014) for p, n in zip(track.centerline, track.normals)]
-        scorch_left = [self.convert_pos(p + n * 0.0044) for p, n in zip(track.centerline, track.normals)]
-        scorch_right = [self.convert_pos(p - n * 0.0044) for p, n in zip(track.centerline, track.normals)]
+        """Render the path as a fractured breach in the greenhouse shell."""
+        center_pts = [self.convert_pos_vr(p) for p in track.centerline]
+        left_pts = [self.convert_pos_vr(p) for p in track.wall_left]
+        right_pts = [self.convert_pos_vr(p) for p in track.wall_right]
+        half_width_px = np.maximum(2, np.round(track.half_widths * self.window_scale).astype(int))
+        lip_left = []
+        lip_right = []
+        fracture_left = []
+        fracture_right = []
+        scorch_left = []
+        scorch_right = []
+        for i, (pt, n, width) in enumerate(zip(track.centerline, track.normals, track.half_widths)):
+            wiggle = 0.55 * math.sin(i * 0.41 + 0.7) + 0.32 * math.sin(i * 0.17 + 1.9)
+            lip_offset = 0.00055 + 0.00022 * wiggle
+            fracture_offset = max(width * 0.24, 0.00085) + 0.00030 * wiggle
+            scorch_offset = width + 0.0018 + 0.00055 * wiggle
+            lip_left.append(self.convert_pos_vr(pt + n * lip_offset))
+            lip_right.append(self.convert_pos_vr(pt - n * lip_offset))
+            fracture_left.append(self.convert_pos_vr(pt + n * fracture_offset))
+            fracture_right.append(self.convert_pos_vr(pt - n * fracture_offset))
+            scorch_left.append(self.convert_pos_vr(pt + n * scorch_offset))
+            scorch_right.append(self.convert_pos_vr(pt - n * scorch_offset))
 
         scorch = pygame.Surface(self.window_size, pygame.SRCALPHA)
         scorch_poly = [(int(p[0]), int(p[1])) for p in scorch_left] + [(int(p[0]), int(p[1])) for p in reversed(scorch_right)]
         if len(scorch_poly) > 5:
-            pygame.draw.polygon(scorch, (*self.SCORCH, 44), scorch_poly)
-            pygame.draw.polygon(scorch, (230, 108, 72, 12), scorch_poly, 3)
+            pygame.draw.polygon(scorch, (96, 64, 48, 38), scorch_poly)
+            pygame.draw.polygon(scorch, (164, 110, 82, 16), scorch_poly, 2)
         surface.blit(scorch, (0, 0))
 
         shadow = pygame.Surface(self.window_size, pygame.SRCALPHA)
         for i in range(len(center_pts) - 1):
-            p1 = (int(center_pts[i][0] + 4), int(center_pts[i][1] + 4))
-            p2 = (int(center_pts[i + 1][0] + 4), int(center_pts[i + 1][1] + 4))
-            pygame.draw.line(shadow, (18, 10, 9, 72), p1, p2,
-                             max(4, int(track.half_width * self.window_scale * 2.2)))
+            p1 = (int(center_pts[i][0] + 3), int(center_pts[i][1] + 3))
+            p2 = (int(center_pts[i + 1][0] + 3), int(center_pts[i + 1][1] + 3))
+            seg_half_width = 0.5 * (half_width_px[i] + half_width_px[i + 1])
+            pygame.draw.line(shadow, (12, 8, 8, 64), p1, p2,
+                             max(4, int(seg_half_width * 1.8)))
         surface.blit(shadow, (0, 0))
 
-        glow_surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
+        dust = pygame.Surface(self.window_size, pygame.SRCALPHA)
         if len(center_pts) > 1:
-            glow_width = int(track.half_width * self.window_scale * 4.2)
             for i in range(len(center_pts) - 1):
-                pulse = 0.7 + 0.3 * math.sin(self.anim_time * 4 + i * 0.05)
-                alpha = int(92 * pulse)
-                color = (*self.CRACK_GLOW, alpha)
                 p1 = (int(center_pts[i][0]), int(center_pts[i][1]))
                 p2 = (int(center_pts[i + 1][0]), int(center_pts[i + 1][1]))
-                pygame.draw.line(glow_surf, color, p1, p2, glow_width)
-        surface.blit(glow_surf, (0, 0))
+                seg_half_width = 0.5 * (half_width_px[i] + half_width_px[i + 1])
+                haze_width = max(4, int(seg_half_width * 2.8))
+                pygame.draw.line(dust, (164, 124, 92, 18), p1, p2, haze_width)
+        surface.blit(dust, (0, 0))
 
-        if len(lip_left) > 1:
-            pygame.draw.lines(surface, (210, 226, 220), False, [(int(p[0]), int(p[1])) for p in lip_left], 2)
-            pygame.draw.lines(surface, (42, 26, 22), False, [(int(p[0]), int(p[1])) for p in right_pts], 3)
-        if len(lip_right) > 1:
-            pygame.draw.lines(surface, (210, 226, 220), False, [(int(p[0]), int(p[1])) for p in lip_right], 2)
-            pygame.draw.lines(surface, (42, 26, 22), False, [(int(p[0]), int(p[1])) for p in left_pts], 3)
+        if len(fracture_left) > 1:
+            pygame.draw.lines(surface, (82, 54, 40), False, [(int(p[0]), int(p[1])) for p in fracture_left], 2)
+            pygame.draw.lines(surface, (218, 224, 214), False, [(int(p[0]), int(p[1])) for p in lip_left], 2)
+        if len(fracture_right) > 1:
+            pygame.draw.lines(surface, (82, 54, 40), False, [(int(p[0]), int(p[1])) for p in fracture_right], 2)
+            pygame.draw.lines(surface, (218, 224, 214), False, [(int(p[0]), int(p[1])) for p in lip_right], 2)
 
         for i in range(len(center_pts) - 1):
             p1 = (int(center_pts[i][0]), int(center_pts[i][1]))
             p2 = (int(center_pts[i + 1][0]), int(center_pts[i + 1][1]))
-            pygame.draw.line(surface, (26, 12, 10), p1, p2, 6)
-            pygame.draw.line(surface, self.CRACK_CORE, p1, p2, 4)
-            pygame.draw.line(surface, self.CRACK_HOT, p1, p2, 1)
+            seg_half_width = 0.5 * (half_width_px[i] + half_width_px[i + 1])
+            fissure_w = max(2, int(seg_half_width * 0.62))
+            pygame.draw.line(surface, (18, 10, 10), p1, p2, fissure_w + 2)
+            pygame.draw.line(surface, (34, 16, 14), p1, p2, fissure_w)
+            if i % 7 == 0:
+                hot_alpha = 55 + int(25 * (0.5 + 0.5 * math.sin(self.anim_time * 2.6 + i * 0.3)))
+                ember = pygame.Surface(self.window_size, pygame.SRCALPHA)
+                pygame.draw.line(ember, (214, 112, 78, hot_alpha), p1, p2, 1)
+                surface.blit(ember, (0, 0))
 
-            if i % 26 == 0 and i < len(track.normals):
+            if i % 18 == 0 and i < len(track.normals):
                 base = np.array(center_pts[i], dtype=float)
                 tangent = np.array(track.centerline[min(i + 1, track.n_pts - 1)]) - np.array(track.centerline[max(i - 1, 0)])
                 if np.linalg.norm(tangent) > 1e-8:
@@ -799,23 +988,34 @@ class Graphics:
                 branch_dir = normal * (1 if (i // 26) % 2 == 0 else -1) + 0.35 * tangent_s
                 if np.linalg.norm(branch_dir) > 1e-8:
                     branch_dir = branch_dir / np.linalg.norm(branch_dir)
-                branch_len = 12 + (i % 3) * 7
+                branch_len = 9 + (i % 4) * 5
                 end = base + branch_dir * branch_len
-                pygame.draw.line(surface, (120, 55, 42), base.astype(int), end.astype(int), 2)
-                pygame.draw.line(surface, (246, 118, 72), base.astype(int), end.astype(int), 1)
+                pygame.draw.line(surface, (72, 42, 34), base.astype(int), end.astype(int), 2)
+                pygame.draw.line(surface, (202, 194, 182), base.astype(int), end.astype(int), 1)
+                if i % 36 == 0:
+                    spur = end + branch_dir * (4 + (i % 3) * 2)
+                    pygame.draw.line(surface, (68, 38, 30), end.astype(int), spur.astype(int), 1)
 
-        left_color = (255, 50, 50) if highlight_wall == 'left' else (160, 80, 50)
-        right_color = (255, 50, 50) if highlight_wall == 'right' else (160, 80, 50)
+        left_color = (255, 62, 62) if highlight_wall == 'left' else (98, 68, 54)
+        right_color = (255, 62, 62) if highlight_wall == 'right' else (98, 68, 54)
+        if highlight_wall in ('left', 'right'):
+            highlight_surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
+            wall_pts = fracture_left if highlight_wall == 'left' else fracture_right
+            pts = [(int(p[0]), int(p[1])) for p in wall_pts]
+            if len(pts) > 1:
+                pygame.draw.lines(highlight_surf, (255, 84, 84, 76), False, pts, 8)
+                pygame.draw.lines(highlight_surf, (255, 136, 136, 120), False, pts, 3)
+            surface.blit(highlight_surf, (0, 0))
 
-        if len(left_pts) > 1:
-            pts = [(int(p[0]), int(p[1])) for p in left_pts]
+        if len(fracture_left) > 1:
+            pts = [(int(p[0]), int(p[1])) for p in fracture_left]
             pygame.draw.lines(surface, left_color, False, pts, 2)
-        if len(right_pts) > 1:
-            pts = [(int(p[0]), int(p[1])) for p in right_pts]
+        if len(fracture_right) > 1:
+            pts = [(int(p[0]), int(p[1])) for p in fracture_right]
             pygame.draw.lines(surface, right_color, False, pts, 2)
 
-        start_s = self.convert_pos(track.start)
-        end_s = self.convert_pos(track.end)
+        start_s = self.convert_pos_vr(track.start)
+        end_s = self.convert_pos_vr(track.end)
 
         for r in [14, 10, 6]:
             alpha = int(80 * (14 - r) / 8)
@@ -841,7 +1041,7 @@ class Graphics:
         """Local task lighting centered on the operator tool."""
         if cursor_phys is None:
             return
-        cursor = self.convert_pos(cursor_phys)
+        cursor = self.convert_pos_vr(cursor_phys)
         x, y = int(cursor[0]), int(cursor[1])
         lamp = pygame.Surface(self.window_size, pygame.SRCALPHA)
         for radius, alpha in ((168, 8), (118, 14), (72, 24)):
@@ -862,7 +1062,7 @@ class Graphics:
         bar_surf.fill((0, 0, 0, 180))
         surface.blit(bar_surf, (0, 0))
 
-        title = title_font.render("MARS GREENHOUSE — AUTONOMOUS CRACK SEAL", True, self.HUD_ORANGE)
+        title = title_font.render("MARS GREENHOUSE — PRESSURE SHELL SEALING", True, self.HUD_ORANGE)
         surface.blit(title, (10, 5))
 
         status_text = f"[{state_name}]  Crack: {crack_name}  Demos: {n_demos}"
@@ -874,9 +1074,9 @@ class Graphics:
         diag.fill((0, 0, 0, 120))
         surface.blit(diag, (w - 194, 48))
         metrics = [
-            ("Pressure retention", f"{int(100 * progress):02d}%"),
+            ("Habitat pressure", f"{int(100 * progress):02d}%"),
             ("Leak severity", f"{int(100 * (1.0 - progress)):02d}%"),
-            ("Crop bay status", "STABLE" if progress > 0.35 else "AT RISK"),
+            ("Crop bay climate", "STABLE" if progress > 0.35 else "AT RISK"),
         ]
         for i, (label, value) in enumerate(metrics):
             ly = 56 + i * 22

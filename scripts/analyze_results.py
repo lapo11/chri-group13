@@ -37,6 +37,36 @@ DEFAULT_METRICS = [
     "tlx_overall",
 ]
 
+SCALAR_PLOT_TYPES = {
+    "pairwise_frechet_m": "box",
+    "path_length_ratio_mean": "box",
+    "jerk_mean": "box",
+    "tlx_overall": "box",
+    "gp_sigma_mean_m": "bar",
+    "demos_to_convergence": "bar",
+    "cumulative_demo_time_to_convergence_s": "bar",
+    "completion_time_s": "bar",
+}
+
+SERIES_PLOT_SPECS = {
+    "gp_sigma_by_demo_m": {
+        "ylabel": "GP sigma (m)",
+        "title": "GP sigma vs demonstration number",
+    },
+    "path_length_ratio_by_demo": {
+        "ylabel": "Path length ratio",
+        "title": "Path length ratio vs demonstration number",
+    },
+    "jerk_by_demo": {
+        "ylabel": "Jerk",
+        "title": "Jerk vs demonstration number",
+    },
+    "gp_path_length_by_demo_m": {
+        "ylabel": "GP path length (m)",
+        "title": "GP path length vs demonstration number",
+    },
+}
+
 
 def _coerce_csv_value(value: str):
     if value is None:
@@ -44,6 +74,11 @@ def _coerce_csv_value(value: str):
     text = value.strip()
     if text == "":
         return None
+    if text[0] in "[{" and text[-1] in "]}":
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
     lowered = text.lower()
     if lowered == "true":
         return True
@@ -63,6 +98,8 @@ def load_rows(results_dir: Path) -> list[dict]:
         if csv_path.parent.name == "analysis":
             continue
         if csv_path.parent == results_dir / "analysis":
+            continue
+        if csv_path.parent.name.startswith("participant_"):
             continue
         with csv_path.open(newline="") as f:
             reader = csv.DictReader(f)
@@ -122,6 +159,31 @@ def is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def condition_labels_in_order(rows: list[dict]) -> list[str]:
+    label_to_order: dict[str, tuple[int, str]] = {}
+    for row in rows:
+        label = row.get("condition_label", "unknown")
+        condition_id = row.get("condition_id")
+        order_key = int(condition_id) if isinstance(condition_id, int) else 10**9
+        if label not in label_to_order or order_key < label_to_order[label][0]:
+            label_to_order[label] = (order_key, label)
+    return [label for _, label in sorted(label_to_order.values(), key=lambda item: (item[0], item[1]))]
+
+
+def numeric_sequence(value) -> list[float] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    seq = []
+    for item in value:
+        if isinstance(item, bool):
+            seq.append(float(item))
+        elif is_number(item):
+            seq.append(float(item))
+        else:
+            return None
+    return seq
+
+
 def write_csv(path: Path, rows: list[dict]) -> None:
     if not rows:
         return
@@ -168,19 +230,98 @@ def plot_metric(rows: list[dict], metric: str, out_path: Path, show_plot: bool =
     if not grouped:
         return
 
-    labels = list(grouped.keys())
+    labels = [label for label in condition_labels_in_order(rows) if label in grouped]
     values = [grouped[label] for label in labels]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.boxplot(values, tick_labels=labels, patch_artist=True)
-    for i, ys in enumerate(values, start=1):
-        xs = np.random.normal(i, 0.04, size=len(ys))
-        ax.scatter(xs, ys, s=20, alpha=0.7)
+    plot_type = SCALAR_PLOT_TYPES.get(metric, "box")
+    if plot_type == "bar":
+        means = [float(np.mean(ys)) for ys in values]
+        stds = [float(np.std(ys, ddof=1)) if len(ys) > 1 else 0.0 for ys in values]
+        x = np.arange(len(labels))
+        bars = ax.bar(x, means, yerr=stds, capsize=5, color="#5b8ff9", alpha=0.8)
+        ax.set_xticks(x, labels)
+        for idx, ys in enumerate(values):
+            xs = np.random.normal(idx, 0.04, size=len(ys))
+            ax.scatter(xs, ys, s=22, alpha=0.7, color="#1f2a44")
+        for bar, mean in zip(bars, means):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                bar.get_height(),
+                f"{mean:.3g}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+    else:
+        ax.boxplot(values, tick_labels=labels, patch_artist=True)
+        for i, ys in enumerate(values, start=1):
+            xs = np.random.normal(i, 0.04, size=len(ys))
+            ax.scatter(xs, ys, s=20, alpha=0.7)
     ax.tick_params(axis="x", rotation=20)
     for tick in ax.get_xticklabels():
         tick.set_ha("right")
     ax.set_ylabel(metric)
     ax.set_title(metric)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    if not show_plot:
+        plt.close(fig)
+
+
+def plot_metric_series(rows: list[dict], metric: str, out_path: Path, show_plot: bool = False) -> None:
+    labels = condition_labels_in_order(rows)
+    series_by_condition: dict[str, list[list[float]]] = {}
+    for row in rows:
+        label = row.get("condition_label", "unknown")
+        seq = numeric_sequence(row.get(metric))
+        if seq:
+            series_by_condition.setdefault(label, []).append(seq)
+
+    if not series_by_condition:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    colors = plt.cm.tab10(np.linspace(0, 1, max(1, len(labels))))
+    plotted = False
+
+    for color, label in zip(colors, labels):
+        sequences = series_by_condition.get(label)
+        if not sequences:
+            continue
+        max_len = max(len(seq) for seq in sequences)
+        xs = np.arange(1, max_len + 1)
+        means = []
+        stds = []
+        valid_xs = []
+        for idx in range(max_len):
+            vals = [seq[idx] for seq in sequences if idx < len(seq) and math.isfinite(seq[idx])]
+            if not vals:
+                continue
+            valid_xs.append(idx + 1)
+            means.append(float(np.mean(vals)))
+            stds.append(float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0)
+        if not valid_xs:
+            continue
+        means_arr = np.array(means, dtype=float)
+        stds_arr = np.array(stds, dtype=float)
+        xs_arr = np.array(valid_xs, dtype=int)
+        ax.plot(xs_arr, means_arr, marker="o", linewidth=2, color=color, label=label)
+        if np.any(stds_arr > 0):
+            ax.fill_between(xs_arr, means_arr - stds_arr, means_arr + stds_arr, color=color, alpha=0.15)
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return
+
+    spec = SERIES_PLOT_SPECS.get(metric, {})
+    ax.set_xlabel("Demonstration number")
+    ax.set_ylabel(spec.get("ylabel", metric))
+    ax.set_title(spec.get("title", metric))
+    ax.set_xticks(sorted({x for sequences in series_by_condition.values() for seq in sequences for x in range(1, len(seq) + 1)}))
+    ax.legend()
+    ax.grid(True, alpha=0.25)
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     if not show_plot:
@@ -193,7 +334,7 @@ def friedman_report(rows: list[dict], metrics: list[str]) -> list[dict]:
     if not participant_rows:
         return results
 
-    conditions = sorted({row.get("condition_label", "unknown") for row in participant_rows})
+    conditions = condition_labels_in_order(participant_rows)
     for metric in metrics:
         per_participant = {}
         for row in participant_rows:
@@ -259,7 +400,11 @@ def run_analysis(
     for metric in metrics:
         plot_metric(rows, metric, plots_dir / f"{metric}.png", show_plot=show_plots)
 
-    if show_plots and metrics:
+    for metric in SERIES_PLOT_SPECS:
+        if any(numeric_sequence(row.get(metric)) for row in rows):
+            plot_metric_series(rows, metric, plots_dir / f"{metric}.png", show_plot=show_plots)
+
+    if show_plots and plt.get_fignums():
         plt.show()
 
     print(f"Analysis written to {out_dir}")

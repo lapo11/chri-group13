@@ -32,13 +32,18 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.Physics import Physics
 from scripts.Graphics import Graphics
-from scripts.targets import get_tube, TUBE_NAMES
+from scripts.targets import (
+    BASE_TUBE_NAMES,
+    ROTATION_ANGLES_DEG,
+    TUBE_NAMES,
+    get_rotated_tube,
+    get_tube,
+)
 from scripts.haptics import TubeHaptics
 from scripts.gp_trajectory import TrajectoryGP
 from scripts.metrics import (
     average_pairwise_frechet,
     mean_jerk_magnitude,
-    mean_nearest_distance,
     path_length_ratio,
 )
 from scripts.nasa_tlx import run_nasa_tlx
@@ -170,17 +175,9 @@ def _prompt_mode(default="free"):
         print("Please enter 'f' for free or 'v' for validation.")
 
 
-def _prompt_validation_group(default="A"):
-    default = str(default).upper()
-    if default not in GROUP_CONDITION_ORDERS:
-        default = "A"
-    while True:
-        raw = input(f"Counterbalance group [A-E] [{default}]: ").strip().upper()
-        if not raw:
-            return default
-        if raw in GROUP_CONDITION_ORDERS:
-            return raw
-        print("Please enter one of: A, B, C, D, E.")
+def _group_from_participant_number(participant_number: int) -> str:
+    groups = ["A", "B", "C", "D", "E"]
+    return groups[(int(participant_number) - 1) % len(groups)]
 
 
 def parse_runtime_config():
@@ -188,7 +185,6 @@ def parse_runtime_config():
     parser.add_argument("--mode", choices=["free", "validation"], default=None)
     parser.add_argument("--participant-number", type=int, default=None)
     parser.add_argument("--participant-count", type=int, dest="participant_count_legacy", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--group", choices=sorted(GROUP_CONDITION_ORDERS.keys()), default=None)
     parser.add_argument("--required-demos", type=int, default=None)
     parser.add_argument("--results-dir", default="results")
     parser.add_argument("--analysis-dir", default="analysis")
@@ -208,10 +204,9 @@ def parse_runtime_config():
     if args.mode == "validation":
         if args.participant_number is None:
             args.participant_number = _prompt_positive_int("Participant number", default=1)
-        if args.group is None:
-            args.group = _prompt_validation_group(default="A")
+        args.group = _group_from_participant_number(args.participant_number)
         if args.required_demos is None:
-            args.required_demos = 3
+            args.required_demos = 10
     else:
         args.participant_number = 1
         args.group = "A"
@@ -241,6 +236,7 @@ class PA3_Kinesthetic:
         self.validation_complete = False
         self.condition_order = self._condition_order_for_current_mode()
         self.condition_cursor = 0
+        self.rng = np.random.default_rng(self.run_id)
 
         self.physics = Physics(hardware_version=3)
         self.device_connected = self.physics.is_device_connected()
@@ -251,14 +247,16 @@ class PA3_Kinesthetic:
         # ── Tube ──
         self.tube_idx = 0
         self.tube_name = TUBE_NAMES[self.tube_idx]
-        self.tube = get_tube(self.tube_name)
-        self.haptics = TubeHaptics(self.tube)
+        self.tube_base_name = self.tube_name
+        self.tube_angle_deg = 0
+        self.tube = None
+        self.haptics = None
+        self._set_catalog_tube(TUBE_NAMES[self.tube_idx])
 
         # ── State ──
         self.state = IDLE
         self.all_demos = []
         self.all_demo_times = []
-        self.per_demo_metrics = []
         self.per_demo_wall_hits = []
         self.current_demo = []
         self.start_time = 0.0
@@ -285,6 +283,8 @@ class PA3_Kinesthetic:
         self.prev_ee_phys = None      # was missing — needed by _compute_pd_force
         self.condition_id = self.condition_order[self.condition_cursor]
         self.condition_spec = None
+        if self.validation_mode:
+            self._randomize_validation_tube(require_change=False)
         self._apply_condition(self.condition_id)
 
     def _participant_label(self):
@@ -294,6 +294,39 @@ class PA3_Kinesthetic:
         if self.validation_mode:
             return list(GROUP_CONDITION_ORDERS[self.validation_group])
         return sorted(CONDITION_SPECS.keys())
+
+    def _set_catalog_tube(self, tube_name):
+        self.tube_idx = TUBE_NAMES.index(tube_name)
+        self.tube_name = tube_name
+        self.tube_base_name = tube_name
+        self.tube_angle_deg = 0
+        self.tube = get_tube(tube_name)
+        self.haptics = TubeHaptics(self.tube)
+
+    def _set_randomized_tube(self, base_name, angle_deg):
+        angle_deg = int(angle_deg) % 360
+        self.tube_base_name = str(base_name)
+        self.tube_angle_deg = angle_deg
+        self.tube_name = (
+            self.tube_base_name if angle_deg == 0 else f"{self.tube_base_name}_rot{angle_deg}"
+        )
+        self.tube = get_rotated_tube(self.tube_base_name, angle_deg)
+        self.haptics = TubeHaptics(self.tube)
+
+    def _randomize_validation_tube(self, require_change=True):
+        prev_base = getattr(self, "tube_base_name", None)
+        prev_angle = getattr(self, "tube_angle_deg", None)
+        chosen_base = str(self.rng.choice(BASE_TUBE_NAMES))
+        chosen_angle = int(self.rng.choice(ROTATION_ANGLES_DEG))
+
+        if require_change and prev_base is not None and prev_angle is not None:
+            for _ in range(32):
+                chosen_base = str(self.rng.choice(BASE_TUBE_NAMES))
+                chosen_angle = int(self.rng.choice(ROTATION_ANGLES_DEG))
+                if chosen_base != prev_base and chosen_angle != prev_angle:
+                    break
+
+        self._set_randomized_tube(chosen_base, chosen_angle)
 
     def _current_participant_dir(self):
         if self.validation_mode:
@@ -309,7 +342,6 @@ class PA3_Kinesthetic:
         self.state = IDLE
         self.all_demos = []
         self.all_demo_times = []
-        self.per_demo_metrics = []
         self.per_demo_wall_hits = []
         self.current_demo = []
         self.start_time = 0.0
@@ -375,6 +407,7 @@ class PA3_Kinesthetic:
         if self.condition_cursor < len(self.condition_order):
             next_cond = self.condition_order[self.condition_cursor]
             self._reset_condition_state()
+            self._randomize_validation_tube(require_change=True)
             self._apply_condition(next_cond)
             self.auto_analysis_status = (
                 f"Participant {self.participant_number}: ready for condition {self.condition_id}/{len(self.condition_order)}."
@@ -450,6 +483,10 @@ class PA3_Kinesthetic:
         self.condition_order = self._condition_order_for_current_mode()
         self.all_results = []
         self._reset_condition_state()
+        if self.validation_mode:
+            self._randomize_validation_tube(require_change=False)
+        else:
+            self._set_catalog_tube(TUBE_NAMES[self.tube_idx])
         self._apply_condition(self.condition_order[self.condition_cursor])
 
     def _interrupt_validation_to_free(self):
@@ -510,17 +547,12 @@ class PA3_Kinesthetic:
             return f"validation P{self.participant_number} G{self.validation_group} ({len(self.all_demos)}/{self.required_demos} demos)"
         return "free"
 
-    def _demo_success_rate(self, success_tol):
-        if not self.all_demos:
-            return 0.0
-        successes = 0
-        for demo in self.all_demos:
-            demo_mnd = mean_nearest_distance(demo, self.tube.centerline)
-            start_error = float(np.linalg.norm(demo[0] - self.tube.start))
-            end_error = float(np.linalg.norm(demo[-1] - self.tube.end))
-            if demo_mnd <= success_tol and start_error <= success_tol and end_error <= success_tol:
-                successes += 1
-        return float(successes / len(self.all_demos))
+    def _wall_contact_now(self):
+        return (
+            self.haptics.contact_wall is not None
+            or self.haptics.last_penetration > 0.0
+            or self.haptics.last_wall_force > 1e-6
+        )
 
     def _compute_validation_metrics(self):
         """
@@ -611,53 +643,6 @@ class PA3_Kinesthetic:
         y = max(0, min(self.graphics.window_size[1] - 1, y))
         return np.array([x, y], dtype=float)
 
-
-    # ─── Tube drawing ───────────────────────────────────────────────────
-    # def _draw_tube(self, surface, highlight_wall=None):
-    #     g = self.graphics
-    #     tube = self.tube
-
-    #     left_pts  = [g.convert_pos(p) for p in tube.wall_left]
-    #     right_pts = [g.convert_pos(p) for p in tube.wall_right]
-    #     center_pts = [g.convert_pos(p) for p in tube.centerline]
-
-    #     left_color  = (255, 50, 50) if highlight_wall == 'left'  else (100, 100, 100)
-    #     right_color = (255, 50, 50) if highlight_wall == 'right' else (100, 100, 100)
-
-    #     # Draw walls first (will be covered by fill, then redrawn)
-    #     if len(left_pts) > 1:
-    #         pygame.draw.lines(surface, left_color, False, left_pts, 3)
-    #     if len(right_pts) > 1:
-    #         pygame.draw.lines(surface, right_color, False, right_pts, 3)
-
-    #     # Fill tube interior
-    #     for i in range(0, len(center_pts) - 1, 2):
-    #         pygame.draw.line(surface, (230, 240, 230),
-    #                          (int(center_pts[i][0]),   int(center_pts[i][1])),
-    #                          (int(center_pts[i+1][0]), int(center_pts[i+1][1])),
-    #                          int(tube.half_width * g.window_scale * 2))
-
-    #     # Re-draw walls on top of fill
-    #     if len(left_pts) > 1:
-    #         pygame.draw.lines(surface, left_color, False, left_pts, 3)
-    #     if len(right_pts) > 1:
-    #         pygame.draw.lines(surface, right_color, False, right_pts, 3)
-
-    #     # Centerline on top
-    #     if len(center_pts) > 1:
-    #         pygame.draw.lines(surface, (120, 120, 120), False, center_pts, 1)
-
-    #     # Start / end markers
-    #     start_s = g.convert_pos(tube.start)
-    #     end_s   = g.convert_pos(tube.end)
-    #     pygame.draw.circle(surface, (0, 200, 0),   (int(start_s[0]), int(start_s[1])), 10)
-    #     pygame.draw.circle(surface, (200, 0, 0),   (int(end_s[0]),   int(end_s[1])),   10)
-    #     font = pygame.font.SysFont("Arial", 12, bold=True)
-    #     surface.blit(font.render("START", True, (0, 200, 0)),
-    #                  (int(start_s[0]) + 12, int(start_s[1]) - 6))
-    #     surface.blit(font.render("END",   True, (200, 0, 0)),
-    #                  (int(end_s[0])   + 12, int(end_s[1])   - 6))
-
     def _draw_tube(self, surface, highlight_wall=None,
                    draw_fill=True, draw_walls=True, draw_centerline=True):
         g = self.graphics
@@ -667,21 +652,19 @@ class PA3_Kinesthetic:
         right_color = (255, 50, 50) if highlight_wall == 'right' else (100, 100, 100)
 
         center_px = [(int(p[0]), int(p[1])) for p in center_pts]
-        tube_px = max(2, int(round(2.0 * tube.half_width * g.window_scale)))
         wall_px = 3
-        fill_r = max(1, tube_px // 2)
-        outer_r = fill_r + wall_px
+        fill_radii = np.maximum(1, np.round(tube.half_widths * g.window_scale).astype(int))
 
         if len(center_px) > 1:
             if draw_walls:
                 border_color = left_color if highlight_wall == 'left' else right_color if highlight_wall == 'right' else (100, 100, 100)
-                for pt in center_px:
-                    pygame.draw.circle(surface, border_color, pt, outer_r)
+                for pt, fill_r in zip(center_px, fill_radii):
+                    pygame.draw.circle(surface, border_color, pt, int(fill_r + wall_px))
 
             if draw_fill:
                 fill_color = (236, 242, 236)
-                for pt in center_px:
-                    pygame.draw.circle(surface, fill_color, pt, fill_r)
+                for pt, fill_r in zip(center_px, fill_radii):
+                    pygame.draw.circle(surface, fill_color, pt, int(fill_r))
 
             if draw_centerline:
                 pygame.draw.lines(surface, (120, 120, 120), False, center_px, 1)
@@ -698,17 +681,19 @@ class PA3_Kinesthetic:
                          (int(end_s[0])   + 12, int(end_s[1])   - 6))
 
 
-    def _draw_trajectory(self, surface, traj_phys, color, width=2):
+    def _draw_trajectory(self, surface, traj_phys, color, width=2, converter=None):
         g = self.graphics
         if len(traj_phys) < 2:
             return
-        pts = [g.convert_pos(p) for p in traj_phys]
+        convert = converter or g.convert_pos
+        pts = [convert(p) for p in traj_phys]
         pygame.draw.lines(surface, color, False, pts, width)
 
-    def _draw_gp_uncertainty(self, surface, traj, std):
+    def _draw_gp_uncertainty(self, surface, traj, std, converter=None):
         g = self.graphics
+        convert = converter or g.convert_pos
         for i in range(0, len(traj), 3):
-            pt = g.convert_pos(traj[i])
+            pt = convert(traj[i])
             r = max(2, int(np.mean(std[i]) * g.window_scale * 2))
             r = min(r, 40)
             s = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
@@ -758,7 +743,7 @@ class PA3_Kinesthetic:
             surf = font.render(line, True, color)
             surface.blit(surf, (x, y + i * line_h))
 
-    def _draw_haptics_status_banner(self, surface):
+    def _draw_haptics_status_banner(self, surface, wall_contact=False):
         panel_x = 16
         panel_y = 16
         card_w = 180
@@ -815,6 +800,18 @@ class PA3_Kinesthetic:
             meta_surf = meta_font.render(line, True, (235, 235, 235))
             surface.blit(meta_surf, (panel_x + 10, meta_y + 3 + idx * 26))
 
+        lamp_x = panel_x + 390
+        lamp_y = panel_y + 46
+        lamp_color = (255, 60, 60) if wall_contact else (70, 40, 40)
+        glow_alpha = 145 if wall_contact else 55
+        glow = pygame.Surface((44, 44), pygame.SRCALPHA)
+        pygame.draw.circle(glow, (*lamp_color, glow_alpha), (22, 22), 20)
+        surface.blit(glow, (lamp_x - 22, lamp_y - 22))
+        pygame.draw.circle(surface, lamp_color, (lamp_x, lamp_y), 10)
+        pygame.draw.circle(surface, (245, 245, 245), (lamp_x, lamp_y), 10, 2)
+        lamp_label = meta_font.render("WALL", True, (245, 245, 245))
+        surface.blit(lamp_label, (lamp_x - 22, lamp_y + 18))
+
     # ─── Main loop ──────────────────────────────────────────────────────
     def run(self):
         p = self.physics
@@ -861,9 +858,7 @@ class PA3_Kinesthetic:
                     self.auto_analysis_status = "Validation mode keeps the crack geometry fixed."
                 else:
                     self.tube_idx = (self.tube_idx + 1) % len(TUBE_NAMES)
-                    self.tube_name = TUBE_NAMES[self.tube_idx]
-                    self.tube = get_tube(self.tube_name)
-                    self.haptics = TubeHaptics(self.tube)
+                    self._set_catalog_tube(TUBE_NAMES[self.tube_idx])
                     self._apply_condition(self.condition_id)
             
 
@@ -885,8 +880,6 @@ class PA3_Kinesthetic:
                         demo_arr = np.array(self.current_demo)
                         self.all_demos.append(demo_arr)
                         self.all_demo_times.append(self.last_demo_time)
-                        mnd = mean_nearest_distance(demo_arr, self.tube.centerline)
-                        self.per_demo_metrics.append(mnd)
                         self.per_demo_wall_hits.append(int(self.wall_hits))
                         self._refresh_online_gp()
                         self.state = REVIEW
@@ -899,7 +892,6 @@ class PA3_Kinesthetic:
                 if len(self.all_demos) > 0:
                     self.all_demos.pop()
                     self.all_demo_times.pop()
-                    self.per_demo_metrics.pop()
                     self.per_demo_wall_hits.pop()
                     self._refresh_online_gp()
                 self.current_demo = []
@@ -947,7 +939,6 @@ class PA3_Kinesthetic:
             if key == ord('c') and self.state in (IDLE, REVIEW, DONE):
                 self.all_demos = []
                 self.all_demo_times = []
-                self.per_demo_metrics = []
                 self.per_demo_wall_hits = []
                 self.current_demo = []
                 self.gp_traj_phys = None
@@ -1017,7 +1008,7 @@ class PA3_Kinesthetic:
 
         # Track discrete wall-contact events instead of counting every frame
         if self.state == RECORDING:
-            in_wall_contact = self.haptics.last_penetration > 0
+            in_wall_contact = self._wall_contact_now()
             if in_wall_contact and not self.wall_contact_active:
                 self.wall_hits += 1
             self.wall_contact_active = in_wall_contact
@@ -1068,6 +1059,8 @@ class PA3_Kinesthetic:
                     self.trial_metrics["input_mode"] = self._effective_input_mode()
                     self.trial_metrics["feedback_mode"] = self.condition_spec["feedback_mode"]
                     self.trial_metrics["tube"] = self.tube_name
+                    self.trial_metrics["tube_base_name"] = self.tube_base_name
+                    self.trial_metrics["tube_angle_deg"] = self.tube_angle_deg
                     self.trial_metrics["n_demos"] = len(self.all_demos)
                     self.trial_metrics["demo_times"] = self.all_demo_times.copy()
                     self.trial_metrics["mean_demo_time_s"] = mean_demo_time
@@ -1105,7 +1098,7 @@ class PA3_Kinesthetic:
         g.haptic.width = 0
         g.haptic.height = 0
 
-        wall_hit = self.haptics.last_wall if self.haptics.last_penetration > 0 else None
+        wall_hit = self.haptics.last_wall if self._wall_contact_now() else None
         progress = self.tube.progress(pos_phys)
         elapsed = time.time() - self.start_time if self.state == RECORDING else 0.0
         
@@ -1151,7 +1144,7 @@ class PA3_Kinesthetic:
                              (int(xh[0] - fe[0] * fscale),
                               int(xh[1] - fe[1] * fscale)), 2)
 
-        self._draw_haptics_status_banner(g.screenHaptics)
+        self._draw_haptics_status_banner(g.screenHaptics, wall_contact=self._wall_contact_now())
 
         # ── Right: VR panel ─────────────────────────────────────────────
         g.draw_mars_vr_scene(
@@ -1169,34 +1162,35 @@ class PA3_Kinesthetic:
         if self.gp_traj_phys is not None:
             gp_idx = self.playback_idx if self.state == PLAYBACK else len(self.gp_traj_phys)
             self._draw_gp_uncertainty(g.screenVR,
-                                      self.gp_traj_phys[:gp_idx], self.gp_traj_std[:gp_idx])
+                                      self.gp_traj_phys[:gp_idx], self.gp_traj_std[:gp_idx],
+                                      converter=g.convert_pos_vr)
 
         # 4. Demos
         for i, demo in enumerate(self.all_demos):
             c = DEMO_COLORS[i % len(DEMO_COLORS)]
-            self._draw_trajectory(g.screenVR, demo, color=c, width=1)
+            self._draw_trajectory(g.screenVR, demo, color=c, width=1, converter=g.convert_pos_vr)
         if self.state == RECORDING and len(self.current_demo) > 1:
             c = DEMO_COLORS[len(self.all_demos) % len(DEMO_COLORS)]
-            self._draw_trajectory(g.screenVR, self.current_demo, color=c, width=2)
+            self._draw_trajectory(g.screenVR, self.current_demo, color=c, width=2, converter=g.convert_pos_vr)
 
         # 5. GP mean trajectory
         if self.gp_traj_phys is not None:
             self._draw_trajectory(g.screenVR, self.gp_traj_phys[:gp_idx],
-                                  color=(40, 40, 220), width=3)
+                                  color=(40, 40, 220), width=3, converter=g.convert_pos_vr)
 
         # 6. Proxy dot
         if self.haptics.last_proxy_pos is not None:
-            ps = g.convert_pos(self.haptics.last_proxy_pos)
+            ps = g.convert_pos_vr(self.haptics.last_proxy_pos)
             pygame.draw.circle(g.screenVR, (255, 165, 0), (int(ps[0]), int(ps[1])), 8)
             pygame.draw.circle(g.screenVR, (200, 0, 0),   (int(ps[0]), int(ps[1])), 8, 2)
 
         # 7. End-effector dot — always on top
-        ee_vr = g.convert_pos(pos_phys)
+        ee_vr = g.convert_pos_vr(pos_phys)
         pygame.draw.circle(g.screenVR, (220, 0, 0), (int(ee_vr[0]), int(ee_vr[1])), 10)
 
         # 8. Auto-play reference dot
         if self.state == AUTO_PLAY and self.gp_traj_phys is not None:
-            ref_vr = g.convert_pos(self.gp_traj_phys[int(self.auto_ref_idx)])
+            ref_vr = g.convert_pos_vr(self.gp_traj_phys[int(self.auto_ref_idx)])
             pygame.draw.circle(g.screenVR, (0, 255, 100),
                                (int(ref_vr[0]), int(ref_vr[1])), 7, 2)
 
@@ -1402,17 +1396,6 @@ class PA3_Kinesthetic:
             return np.zeros(2)
 
         return fe
-
-
-    # def _save_results(self):
-    #     if not self.all_results: return
-    #     os.makedirs("results", exist_ok=True)
-    #     fname = f"results/kinesthetic_{int(time.time())}.json"
-    #     with open(fname, "w") as f:
-    #         json.dump(self.all_results, f, indent=2, default=str)
-    #     print(f"Results saved to {fname}")
-
-
     def _save_results(self):
         if not self.all_results and not self.all_demos:
             return
@@ -1446,6 +1429,8 @@ class PA3_Kinesthetic:
                 "input_mode": self._effective_input_mode(),
                 "feedback_mode": self.condition_spec["feedback_mode"],
                 "hardware_connected": self.device_connected,
+                "tube_base_name": self.tube_base_name,
+                "tube_angle_deg": self.tube_angle_deg,
                 "n_demos": len(self.all_demos),
                 "demo_files": [f"demo_{i+1}.npy" for i in range(len(self.all_demos))],
             }
@@ -1486,6 +1471,8 @@ class PA3_Kinesthetic:
             "input_mode": self._effective_input_mode(),
             "feedback_mode": self.condition_spec["feedback_mode"],
             "hardware_connected": self.device_connected,
+            "tube_base_name": self.tube_base_name,
+            "tube_angle_deg": self.tube_angle_deg,
             "n_trials": len(self.all_results),
             "n_demos":     len(self.all_demos),
             "demo_files":  [f"demo_{i+1}.npy" for i in range(len(self.all_demos))],
